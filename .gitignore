@@ -1,0 +1,4 @@
+.venvIA/
+.env
+__pycache__/
+
