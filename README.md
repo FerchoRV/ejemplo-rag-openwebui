@@ -51,3 +51,9 @@ RUN_TAG="v1_chunk500_ov50" python evaluate_rag.py
 
 RUN_TAG="v2_chunk400_ov40" python evaluate_rag.py
 
+TARGET_MODEL="modelo-fitness-colombiano" JUDGE_MODEL="qwen2.5:7b-instruct" RUN_TAG="v1_chunk500_ov50" python evaluate_rag.py
+
+# Opciones de modelo juez con mayor capacidad que el actual:
+
+qwen2.5:7b-instruct
+gemma2:9b
