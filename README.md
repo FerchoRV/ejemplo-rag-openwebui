@@ -44,3 +44,10 @@ pip install open-webui
 
 # 4. Inícialo apuntando a tu Ollama en localhost:11434
 OLLAMA_BASE_URL=http://localhost:11434 open-webui serve --port 3000
+
+# Ejemplo de ejecutar evaluate_rag.py
+
+RUN_TAG="v1_chunk500_ov50" python evaluate_rag.py
+
+RUN_TAG="v2_chunk400_ov40" python evaluate_rag.py
+
