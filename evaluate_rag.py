@@ -13,15 +13,17 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 # ==============================================================================
 # 1. CONFIGURACIÓN DEL FLUJO Y MODELOS
 # ==============================================================================
-OPENWEBUI_BASE_URL = os.getenv("OPENWEBUI_BASE_URL", "http://localhost:3000/api")
-OPENWEBUI_API_KEY = os.getenv("OPENWEBUI_API_KEY", "")
+OPENWEBUI_BASE_URL = os.getenv(
+    "OPENWEBUI_BASE_URL", "http://localhost:3000/api"
+).strip().rstrip("/")
+OPENWEBUI_API_KEY = os.getenv("OPENWEBUI_API_KEY", "").strip().strip('"').strip("'")
 
 # Modelo bajo prueba (tu modelo personalizado con RAG en Open WebUI)
-TARGET_MODEL = os.getenv("TARGET_MODEL", "modelo-fitness-colombiano")
+TARGET_MODEL = os.getenv("TARGET_MODEL", "modelo-fitness-colombiano").strip().strip('"').strip("'")
 
 # Modelo juez opcional para evaluar fidelidad/completitud (1 a 5).
 # Déjalo vacío ("") si solo quieres medir latencia, éxito y palabras clave.
-JUDGE_MODEL = os.getenv("JUDGE_MODEL", "")
+JUDGE_MODEL = os.getenv("JUDGE_MODEL", "").strip().strip('"').strip("'")
 
 # Etiqueta de versión para comparar experimentos (ej: "v1_chunk500_ov50")
 RUN_TAG = os.getenv("RUN_TAG", "baseline")
@@ -51,6 +53,36 @@ def load_dataset(path: Path) -> list[dict]:
     return items
 
 
+def format_api_error(exc: Exception) -> str:
+    detail = str(exc)
+    body = getattr(exc, "body", None)
+    if body and str(body) not in detail:
+        detail = f"{detail}: {body}"
+    return detail
+
+
+def check_connection() -> None:
+    """Falla al inicio si la API key no autentica o el modelo no existe."""
+    try:
+        models = client.models.list()
+    except Exception as exc:
+        raise RuntimeError(
+            "No se pudo autenticar contra Open WebUI en "
+            f"{OPENWEBUI_BASE_URL}. Usa una API key de "
+            "Settings → Account → API Keys (empieza por sk-), "
+            "no el token de sesión del navegador. "
+            f"Detalle: {format_api_error(exc)}"
+        ) from exc
+
+    ids = [model.id for model in models.data]
+    if TARGET_MODEL not in ids:
+        available = ", ".join(ids) if ids else "(ninguno)"
+        raise RuntimeError(
+            f"El modelo '{TARGET_MODEL}' no está en Open WebUI. "
+            f"Disponibles: {available}"
+        )
+
+
 def query_target_model(prompt: str) -> tuple[str, float, str | None]:
     t0 = time.perf_counter()
     try:
@@ -64,7 +96,7 @@ def query_target_model(prompt: str) -> tuple[str, float, str | None]:
         return content, elapsed, None
     except Exception as exc:
         elapsed = time.perf_counter() - t0
-        return "", elapsed, str(exc)
+        return "", elapsed, format_api_error(exc)
 
 
 def check_required_keywords(answer: str, keywords: list[str]) -> dict[str, bool]:
@@ -111,14 +143,23 @@ def judge_answer(
             score = None
         return score, str(parsed.get("reason", ""))
     except Exception as exc:
-        return None, f"judge_error: {exc}"
+        return None, f"judge_error: {format_api_error(exc)}"
 
 
 def main() -> None:
     if not OPENWEBUI_API_KEY:
         raise RuntimeError("Falta OPENWEBUI_API_KEY en el entorno o .env")
+    if not OPENWEBUI_API_KEY.startswith("sk-"):
+        raise RuntimeError(
+            "OPENWEBUI_API_KEY no es una API key de Open WebUI. "
+            "Créala en Settings → Account → API Keys (formato sk-...). "
+            "El token de sesión del navegador deja de servir cuando "
+            "cambia WEBUI_SECRET_KEY."
+        )
     if not DATASET_PATH.exists():
         raise FileNotFoundError(f"No se encontró {DATASET_PATH}")
+
+    check_connection()
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -126,7 +167,8 @@ def main() -> None:
 
     dataset = load_dataset(DATASET_PATH)
     print(
-        f"Ejecutando {len(dataset)} casos | Modelo: {TARGET_MODEL} | Tag: {RUN_TAG}"
+        f"Ejecutando {len(dataset)} casos | {OPENWEBUI_BASE_URL} | "
+        f"Modelo: {TARGET_MODEL} | Tag: {RUN_TAG}"
     )
 
     records = []
@@ -154,7 +196,7 @@ def main() -> None:
         }
         records.append(rec)
 
-        status = "ERR" if error else f"{latency_s:.2f}s"
+        status = f"ERR: {error}" if error else f"{latency_s:.2f}s"
         score_str = f" | score={score}/5" if score is not None else ""
         print(f"[{idx}/{len(dataset)}] {case['id']} ({status}){score_str}")
 
